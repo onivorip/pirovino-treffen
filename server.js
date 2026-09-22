@@ -1,9 +1,13 @@
 const express = require("express");
 const { createClient } = require("@supabase/supabase-js");
+const { Resend } = require("resend");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const ADMIN_KEY = process.env.ADMIN_KEY || "";
+const NOTIFICATION_EMAIL = process.env.NOTIFICATION_EMAIL || "";
+const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
+const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
@@ -47,6 +51,35 @@ app.post("/api/rsvp", async (req, res) => {
       console.error(error);
       return res.status(500).json({ error: "Die Anmeldung konnte nicht gespeichert werden." });
     }
+
+    // Send a notification to the organizer. The RSVP remains successful
+    // even if the notification email cannot be sent.
+    if (resend && NOTIFICATION_EMAIL) {
+      const guestText = guests.length ? guests.map(g => `• ${g}`).join("\n") : "Keine Begleitpersonen";
+      const statusText = attending ? "kommt" : "kommt leider nicht";
+      try {
+        await resend.emails.send({
+          from: "Pirovino Treffen <onboarding@resend.dev>",
+          to: [NOTIFICATION_EMAIL],
+          subject: `Pirovino Treffen – ${name} ${attending ? "kommt" : "kommt leider nicht"}`,
+          text:
+`Neue Rückmeldung zum Pirovino Treffen
+
+${name} ${statusText}.
+
+Begleitpersonen:
+${guestText}
+
+E-Mail: ${email || "keine E-Mail angegeben"}
+
+Datum: Samstag, 12. Juni 2027
+Ort: Mörsburg, Winterthur`
+        });
+      } catch (mailError) {
+        console.error("Resend notification failed:", mailError);
+      }
+    }
+
     res.json({ ok: true });
   } catch (e) {
     console.error(e);
