@@ -1,0 +1,164 @@
+{
+  "name": "pirovino-treffen-rsvp",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "express": "^4.21.2"
+  }
+}
+# Pirovino Treffen – RSVP Web-App
+
+## Veranstaltung
+**Pirovino Treffen — Samstag, 12. Juni 2027**  
+**Mörsburg, Winterthur**
+
+## Enthalten
+- sehr einfache, seniorenfreundliche RSVP-Oberfläche
+- „Ja, ich komme“ / „Nein, leider nicht“
+- namentliche Begleitpersonen
+- optionale E-Mail-Adresse für spätere Informationen
+- Admin-Übersicht
+- CSV-Export
+
+## Hinweis zum kostenlosen Hosting
+Die mitgelieferte Version verwendet SQLite. Auf kostenlosen Render-Webservices ist das lokale Dateisystem nicht dauerhaft; SQLite-Daten können bei Neustarts/Deployments verloren gehen. Für den echten öffentlichen Betrieb sollte die Datenbank daher auf einen dauerhaften Dienst wie Supabase ausgelagert werden. Render bestätigt diese Einschränkung ausdrücklich.
+
+Die einfachste sichere kostenlose Variante ist:
+1. GitHub für den Code
+2. Render Free für die Web-App
+3. Supabase Free für die Gästeliste/Datenbank
+
+Supabase Free bietet aktuell 500 MB Datenbank und ist für ein kleines Treffen mehr als ausreichend.
+
+const express = require("express");
+const Database = require("better-sqlite3");
+const path = require("path");
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const ADMIN_KEY = process.env.ADMIN_KEY || "bitte-aendern";
+const EVENT_DATE = "2027-06-12";
+
+const db = new Database("pirovino.sqlite");
+db.pragma("journal_mode = WAL");
+db.exec(`
+CREATE TABLE IF NOT EXISTS responses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  attending INTEGER NOT NULL,
+  guests TEXT NOT NULL DEFAULT '[]',
+  email TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`);
+
+app.use(express.json({ limit: "100kb" }));
+app.use(express.static(path.join(__dirname, "public")));
+
+app.get("/api/event", (_req, res) => {
+  res.json({
+    name: "Pirovino Treffen",
+    date: EVENT_DATE,
+    location: "Mörsburg, Winterthur"
+  });
+});
+
+app.post("/api/rsvp", (req, res) => {
+  const name = String(req.body.name || "").trim();
+  const attending = req.body.attending === true;
+  const guests = Array.isArray(req.body.guests)
+    ? req.body.guests.map(x => String(x).trim()).filter(Boolean).slice(0, 20)
+    : [];
+  const email = String(req.body.email || "").trim();
+
+  if (!name) return res.status(400).json({ error: "Bitte Namen eingeben." });
+  if (!attending && guests.length) {
+    return res.status(400).json({ error: "Gäste können nur eingetragen werden, wenn du kommst." });
+  }
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: "Bitte eine gültige E-Mail-Adresse eingeben." });
+  }
+
+  const stmt = db.prepare(`
+    INSERT INTO responses (name, attending, guests, email)
+    VALUES (?, ?, ?, ?)
+  `);
+  stmt.run(name, attending ? 1 : 0, JSON.stringify(guests), email);
+
+  res.json({ ok: true });
+});
+
+function requireAdmin(req, res, next) {
+  if (req.query.key !== ADMIN_KEY) return res.status(401).send("Nicht autorisiert.");
+  next();
+}
+
+app.get("/admin", requireAdmin, (_req, res) => {
+  const rows = db.prepare("SELECT * FROM responses ORDER BY created_at DESC").all();
+  const parsed = rows.map(r => ({...r, guests: JSON.parse(r.guests)}));
+  res.send(adminHtml(parsed));
+});
+
+app.get("/admin.csv", requireAdmin, (_req, res) => {
+  const rows = db.prepare("SELECT * FROM responses ORDER BY created_at DESC").all();
+  const header = ["Name", "Kommt", "Gäste", "E-Mail", "Zeitpunkt"];
+  const csv = [
+    header,
+    ...rows.map(r => [
+      r.name,
+      r.attending ? "Ja" : "Nein",
+      JSON.parse(r.guests).join("; "),
+      r.email,
+      r.created_at
+    ])
+  ].map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", "attachment; filename=pirovino-gaesteliste.csv");
+  res.send("\uFEFF" + csv);
+});
+
+app.listen(PORT, () => {
+  console.log(`Pirovino Treffen läuft auf http://localhost:${PORT}`);
+});
+
+function adminHtml(rows) {
+  const attending = rows.filter(r => r.attending);
+  const total = attending.reduce((sum, r) => sum + 1 + JSON.parse(r.guests).length, 0);
+  const emails = rows.filter(r => r.email);
+
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+  }[c]));
+
+  return `<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pirovino Treffen – Verwaltung</title>
+<style>
+body{font-family:system-ui,-apple-system,sans-serif;max-width:900px;margin:40px auto;padding:0 20px;color:#222}
+h1{font-size:30px}.stats{display:flex;gap:20px;flex-wrap:wrap;margin:25px 0}
+.stat{border:1px solid #ddd;border-radius:14px;padding:18px;min-width:150px}.n{font-size:30px;font-weight:700}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px;border-bottom:1px solid #eee;vertical-align:top}
+a{display:inline-block;padding:12px 16px;border:1px solid #222;border-radius:10px;text-decoration:none;color:#222;margin-bottom:20px}
+small{color:#666}
+</style></head><body>
+<h1>Pirovino Treffen</h1>
+<p>Verwaltung der Anmeldungen</p>
+<div class="stats">
+<div class="stat"><div class="n">${total}</div>Personen kommen</div>
+<div class="stat"><div class="n">${attending.length}</div>Anmeldungen</div>
+<div class="stat"><div class="n">${emails.length}</div>E-Mail-Adressen</div>
+</div>
+<a href="/admin.csv?key=${encodeURIComponent(ADMIN_KEY)}">Gästeliste als CSV exportieren</a>
+<table><thead><tr><th>Name</th><th>Kommt</th><th>Gäste</th><th>E-Mail</th><th>Zeitpunkt</th></tr></thead>
+<tbody>${rows.map(r => `<tr>
+<td>${esc(r.name)}</td><td>${r.attending ? "Ja" : "Nein"}</td>
+<td>${JSON.parse(r.guests).map(esc).join("<br>") || "–"}</td>
+<td>${esc(r.email) || "–"}</td><td><small>${esc(r.created_at)}</small></td>
+</tr>`).join("")}</tbody></table>
+</body></html>`;
+}
