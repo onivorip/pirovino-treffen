@@ -35,8 +35,8 @@ app.post("/api/rsvp", async (req, res) => {
       return res.status(400).json({ error: "Bitte auswählen, ob du kommst." });
     if (!attending && guests.length)
       return res.status(400).json({ error: "Gäste können nur eingetragen werden, wenn du kommst." });
-    if (!email) return res.status(400).json({ error: "Bitte deine E-Mail-Adresse eingeben." });
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+    if (attending && !email) return res.status(400).json({ error: "Bitte deine E-Mail-Adresse eingeben." });
+    if (attending && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
       return res.status(400).json({ error: "Bitte eine gültige E-Mail-Adresse eingeben." });
 
     const { error } = await supabase.from("responses").insert({
