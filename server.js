@@ -26,31 +26,6 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 app.use(express.json({ limit: "100kb" }));
 app.use(express.static("public"));
 
-
-app.get("/calendar.ics", (req, res) => {
-  const ics = [
-    "BEGIN:VCALENDAR",
-    "VERSION:2.0",
-    "PRODID:-//Pirovino Treffen//DE",
-    "CALSCALE:GREGORIAN",
-    "METHOD:PUBLISH",
-    "BEGIN:VEVENT",
-    "UID:pirovino-treffen-2027-06-12@pirovino-treffen",
-    "DTSTAMP:20260922T000000Z",
-    "DTSTART;VALUE=DATE:20270612",
-    "DTEND;VALUE=DATE:20270613",
-    "SUMMARY:Pirovino Treffen",
-    "LOCATION:Mörsburg, Winterthur",
-    "DESCRIPTION:Pirovino Treffen in der Mörsburg, Winterthur.",
-    "END:VEVENT",
-    "END:VCALENDAR"
-  ].join("\\r\\n");
-
-  res.setHeader("Content-Type", "text/calendar; charset=utf-8");
-  res.setHeader("Content-Disposition", 'attachment; filename="Pirovino-Treffen-2027.ics"');
-  res.send(ics);
-});
-
 app.post("/api/rsvp", async (req, res) => {
   try {
     const name = String(req.body.name || "").trim();
